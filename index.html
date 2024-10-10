@@ -26,6 +26,26 @@
             font-weight: bold;
             margin-top: 10px;
         }
+        #loader {
+            display: none;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 1000;
+        }
+        .spinner {
+            border: 5px solid #f3f3f3;
+            border-top: 5px solid #3498db;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
     </style>
 </head>
 <body>
@@ -33,6 +53,9 @@
     <div id="chart-container">
         <canvas id="ndviChart"></canvas>
         <div id="error-message"></div>
+    </div>
+    <div id="loader">
+        <div class="spinner"></div>
     </div>
     <script>
         mapboxgl.accessToken = 'pk.eyJ1IjoibWlsaW5kc29uaSIsImEiOiJjbDRjc2ZxaTgwMW5hM3Bqbmlka3VweWVkIn0.AM0QzfbGzUZc04vZ6o2uaw';
@@ -44,70 +67,81 @@
         });
 
         let chart = null;
+        let selectedFeatureId = null;
 
-        // Include the updated fetchNDVI function here
+        function showLoader() {
+            document.getElementById('loader').style.display = 'block';
+        }
+
+        function hideLoader() {
+            document.getElementById('loader').style.display = 'none';
+        }
+
         function fetchNDVI(lat, lon) {
-    const start_date = '2023-01-01';
-    const end_date = '2023-12-31';
-    const buffer_km = 1;  // You can adjust this value as needed
+            const start_date = '2023-01-01';
+            const end_date = '2023-12-31';
+            const buffer_km = 1;
 
-    const url = `https://www.fused.io/server/v1/realtime-shared/fsh_7mlqdkhG8Lf6dxJaRekHUc/run/file?dtype_out_raster=tiff&dtype_out_vector=csv&search_lat=${lat}&search_lon=${lon}&start_date=${start_date}&end_date=${end_date}&buffer_km=${buffer_km}`;
-    
-    console.log(`Fetching NDVI for Lat: ${lat}, Lon: ${lon}`);
-    
-    fetch(url)
-        .then(response => {
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
-            }
-            return response.text();
-        })
-        .then(data => {
-            console.log("NDVI API Response:", data);
+            const url = `https://www.fused.io/server/v1/realtime-shared/fsh_7mlqdkhG8Lf6dxJaRekHUc/run/file?dtype_out_raster=tiff&dtype_out_vector=csv&search_lat=${lat}&search_lon=${lon}&start_date=${start_date}&end_date=${end_date}&buffer_km=${buffer_km}`;
             
-            // Check if the response contains an error message
-            if (data.includes('error')) {
-                throw new Error(data);
-            }
-
-            // Parse the CSV data
-            const lines = data.trim().split('\n');
-            if (lines.length < 2) {
-                throw new Error('No data found in the NDVI response');
-            }
-
-            const headers = lines[0].split(',');
-            const dateIndex = headers.indexOf('date');
-            const ndviIndex = headers.indexOf('ndvi');
+            console.log(`Fetching NDVI for Lat: ${lat}, Lon: ${lon}`);
+            showLoader();
             
-            if (dateIndex === -1 || ndviIndex === -1) {
-                console.error('Headers:', headers);
-                throw new Error('Required columns (date or ndvi) not found in the data');
-            }
-
-            const ndviData = lines.slice(1)
-                .map(line => {
-                    const fields = line.split(',');
-                    return {
-                        date: fields[dateIndex],
-                        ndvi: parseFloat(fields[ndviIndex])
-                    };
+            fetch(url)
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! status: ${response.status}`);
+                    }
+                    return response.text();
                 })
-                .filter(item => !isNaN(item.ndvi))
-                .sort((a, b) => new Date(a.date) - new Date(b.date));
+                .then(data => {
+                    console.log("NDVI API Response:", data);
+                    
+                    if (data.includes('error')) {
+                        throw new Error(data);
+                    }
 
-            if (ndviData.length === 0) {
-                throw new Error('No valid NDVI data found');
-            }
+                    const lines = data.trim().split('\n');
+                    if (lines.length < 2) {
+                        throw new Error('No data found in the NDVI response');
+                    }
 
-            console.log('Processed NDVI Data:', ndviData);
-            updateChart(ndviData);
-        })
-        .catch(error => {
-            console.error('Error fetching NDVI:', error);
-            document.getElementById('error-message').textContent = `Error fetching NDVI: ${error.message}`;
-        });
-}
+                    const headers = lines[0].split(',');
+                    const dateIndex = headers.indexOf('date');
+                    const ndviIndex = headers.indexOf('ndvi');
+                    
+                    if (dateIndex === -1 || ndviIndex === -1) {
+                        console.error('Headers:', headers);
+                        throw new Error('Required columns (date or ndvi) not found in the data');
+                    }
+
+                    const ndviData = lines.slice(1)
+                        .map(line => {
+                            const fields = line.split(',');
+                            return {
+                                date: fields[dateIndex],
+                                ndvi: parseFloat(fields[ndviIndex])
+                            };
+                        })
+                        .filter(item => !isNaN(item.ndvi))
+                        .sort((a, b) => new Date(a.date) - new Date(b.date));
+
+                    if (ndviData.length === 0) {
+                        throw new Error('No valid NDVI data found');
+                    }
+
+                    console.log('Processed NDVI Data:', ndviData);
+                    updateChart(ndviData);
+                })
+                .catch(error => {
+                    console.error('Error fetching NDVI:', error);
+                    document.getElementById('error-message').textContent = `Error fetching NDVI: ${error.message}`;
+                })
+                .finally(() => {
+                    hideLoader();
+                });
+        }
+
         function updateChart(data) {
             const ctx = document.getElementById('ndviChart').getContext('2d');
             
@@ -154,17 +188,44 @@
                 'source': 'fused-vector-source',
                 'source-layer': 'udf',
                 'paint': {
-                    'fill-color': 'rgba(53, 175, 109, 0.4)',
-                    'fill-outline-color': 'white'
+                    'fill-color': [
+                        'case',
+                        ['boolean', ['feature-state', 'selected'], false],
+                        'yellow',
+                        'rgba(53, 175, 109, 0.8)'  // Darker green color
+                    ],
+                    'fill-outline-color': 'white',
+                    'fill-opacity': [
+                        'case',
+                        ['boolean', ['feature-state', 'selected'], false],
+                        0.8,
+                        0.6
+                    ]
                 }
             });
 
             map.on('click', 'fused-vector-layer', (e) => {
                 if (e.features.length > 0) {
-                    const feature = e.features[0];
-                    console.log('Clicked Feature:', feature);
+                    const clickedFeature = e.features[0];
+                    const clickedFeatureId = clickedFeature.id;
+
+                    // If a feature was previously selected, unselect it
+                    if (selectedFeatureId !== null) {
+                        map.setFeatureState(
+                            { source: 'fused-vector-source', sourceLayer: 'udf', id: selectedFeatureId },
+                            { selected: false }
+                        );
+                    }
+
+                    // Select the clicked feature
+                    selectedFeatureId = clickedFeatureId;
+                    map.setFeatureState(
+                        { source: 'fused-vector-source', sourceLayer: 'udf', id: selectedFeatureId },
+                        { selected: true }
+                    );
+
+                    console.log('Clicked Feature:', clickedFeature);
                     
-                    // Use the click coordinates instead of centroid
                     const lat = e.lngLat.lat;
                     const lon = e.lngLat.lng;
                     
