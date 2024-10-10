@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>Interactive Vector Tile Map with NDVI Time Series Chart</title>
+    <meta name="viewport" content="initial-scale=1,maximum-scale=1,user-scalable=no">
+    <link href="https://api.mapbox.com/mapbox-gl-js/v3.2.0/mapbox-gl.css" rel="stylesheet">
+    <script src="https://api.mapbox.com/mapbox-gl-js/v3.2.0/mapbox-gl.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body { margin: 0; padding: 0; }
+        #map { position: absolute; top: 0; bottom: 50%; width: 100%; }
+        #chart-container {
+            position: absolute;
+            top: 50%;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            padding: 20px;
+            background-color: white;
+            text-align: center;
+            overflow-y: auto;
+        }
+        #error-message {
+            color: red;
+            font-weight: bold;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+    <div id="chart-container">
+        <canvas id="ndviChart"></canvas>
+        <div id="error-message"></div>
+    </div>
+    <script>
+        mapboxgl.accessToken = 'pk.eyJ1IjoibWlsaW5kc29uaSIsImEiOiJjbDRjc2ZxaTgwMW5hM3Bqbmlka3VweWVkIn0.AM0QzfbGzUZc04vZ6o2uaw';
+        const map = new mapboxgl.Map({
+            container: 'map',
+            style: 'mapbox://styles/mapbox/satellite-v9',
+            zoom: 12.09585638172128,
+            center: [-8.184161007797591, 39.0762503844284]
+        });
+
+        let chart = null;
+
+        // Include the updated fetchNDVI function here
+        function fetchNDVI(lat, lon) {
+    const start_date = '2023-01-01';
+    const end_date = '2023-12-31';
+    const buffer_km = 1;  // You can adjust this value as needed
+
+    const url = `https://www.fused.io/server/v1/realtime-shared/fsh_7mlqdkhG8Lf6dxJaRekHUc/run/file?dtype_out_raster=tiff&dtype_out_vector=csv&search_lat=${lat}&search_lon=${lon}&start_date=${start_date}&end_date=${end_date}&buffer_km=${buffer_km}`;
+    
+    console.log(`Fetching NDVI for Lat: ${lat}, Lon: ${lon}`);
+    
+    fetch(url)
+        .then(response => {
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            return response.text();
+        })
+        .then(data => {
+            console.log("NDVI API Response:", data);
+            
+            // Check if the response contains an error message
+            if (data.includes('error')) {
+                throw new Error(data);
+            }
+
+            // Parse the CSV data
+            const lines = data.trim().split('\n');
+            if (lines.length < 2) {
+                throw new Error('No data found in the NDVI response');
+            }
+
+            const headers = lines[0].split(',');
+            const dateIndex = headers.indexOf('date');
+            const ndviIndex = headers.indexOf('ndvi');
+            
+            if (dateIndex === -1 || ndviIndex === -1) {
+                console.error('Headers:', headers);
+                throw new Error('Required columns (date or ndvi) not found in the data');
+            }
+
+            const ndviData = lines.slice(1)
+                .map(line => {
+                    const fields = line.split(',');
+                    return {
+                        date: fields[dateIndex],
+                        ndvi: parseFloat(fields[ndviIndex])
+                    };
+                })
+                .filter(item => !isNaN(item.ndvi))
+                .sort((a, b) => new Date(a.date) - new Date(b.date));
+
+            if (ndviData.length === 0) {
+                throw new Error('No valid NDVI data found');
+            }
+
+            console.log('Processed NDVI Data:', ndviData);
+            updateChart(ndviData);
+        })
+        .catch(error => {
+            console.error('Error fetching NDVI:', error);
+            document.getElementById('error-message').textContent = `Error fetching NDVI: ${error.message}`;
+        });
+}
+        function updateChart(data) {
+            const ctx = document.getElementById('ndviChart').getContext('2d');
+            
+            if (chart) {
+                chart.destroy();
+            }
+
+            chart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: data.map(item => item.date),
+                    datasets: [{
+                        label: 'NDVI',
+                        data: data.map(item => item.ndvi),
+                        borderColor: 'rgb(75, 192, 192)',
+                        tension: 0.1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            max: 1
+                        }
+                    }
+                }
+            });
+        }
+
+        map.on('load', () => {
+            map.addSource('fused-vector-source', {
+                'type': 'vector',
+                'tiles': [
+                    'https://www.fused.io/server/v1/realtime-shared/fsh_4DTHqsOyH1a1KXobqnHsyC/run/tiles/{z}/{x}/{y}?dtype_out_vector=mvt'
+                ],
+                'minzoom': 6,
+                'maxzoom': 14
+            });
+
+            map.addLayer({
+                'id': 'fused-vector-layer',
+                'type': 'fill',
+                'source': 'fused-vector-source',
+                'source-layer': 'udf',
+                'paint': {
+                    'fill-color': 'rgba(53, 175, 109, 0.4)',
+                    'fill-outline-color': 'white'
+                }
+            });
+
+            map.on('click', 'fused-vector-layer', (e) => {
+                if (e.features.length > 0) {
+                    const feature = e.features[0];
+                    console.log('Clicked Feature:', feature);
+                    
+                    // Use the click coordinates instead of centroid
+                    const lat = e.lngLat.lat;
+                    const lon = e.lngLat.lng;
+                    
+                    fetchNDVI(lat, lon);
+                }
+            });
+
+            map.on('mouseenter', 'fused-vector-layer', () => {
+                map.getCanvas().style.cursor = 'pointer';
+            });
+
+            map.on('mouseleave', 'fused-vector-layer', () => {
+                map.getCanvas().style.cursor = '';
+            });
+        });
+    </script>
+</body>
+</html>
