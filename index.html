@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="utf-8">
-    <title>Interactive Vector Tile Map with NDVI Time Series Chart</title>
+    <title>Interactive Vector Tile Map with NDVI and NDWI Time Series Charts</title>
     <meta name="viewport" content="initial-scale=1,maximum-scale=1,user-scalable=no">
     <link href="https://api.mapbox.com/mapbox-gl-js/v3.2.0/mapbox-gl.css" rel="stylesheet">
     <script src="https://api.mapbox.com/mapbox-gl-js/v3.2.0/mapbox-gl.js"></script>
@@ -20,6 +20,13 @@
             background-color: white;
             text-align: center;
             overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+        }
+        .chart-wrapper {
+            flex: 1;
+            min-height: 300px;
+            margin-bottom: 20px;
         }
         #error-message {
             color: red;
@@ -51,7 +58,12 @@
 <body>
     <div id="map"></div>
     <div id="chart-container">
-        <canvas id="ndviChart"></canvas>
+        <div class="chart-wrapper">
+            <canvas id="ndviChart"></canvas>
+        </div>
+        <div class="chart-wrapper">
+            <canvas id="ndwiChart"></canvas>
+        </div>
         <div id="error-message"></div>
     </div>
     <div id="loader">
@@ -66,7 +78,8 @@
             center: [-8.184161007797591, 39.0762503844284]
         });
 
-        let chart = null;
+        let ndviChart = null;
+        let ndwiChart = null;
         let selectedFeatureId = null;
 
         function showLoader() {
@@ -77,14 +90,14 @@
             document.getElementById('loader').style.display = 'none';
         }
 
-        function fetchNDVI(lat, lon) {
+        function fetchData(lat, lon) {
             const start_date = '2017-01-01';
             const end_date = '2024-12-31';
             const buffer_km = 1;
 
             const url = `https://www.fused.io/server/v1/realtime-shared/fsh_7mlqdkhG8Lf6dxJaRekHUc/run/file?dtype_out_raster=tiff&dtype_out_vector=csv&search_lat=${lat}&search_lon=${lon}&start_date=${start_date}&end_date=${end_date}&buffer_km=${buffer_km}`;
             
-            console.log(`Fetching NDVI for Lat: ${lat}, Lon: ${lon}`);
+            console.log(`Fetching data for Lat: ${lat}, Lon: ${lon}`);
             showLoader();
             
             fetch(url)
@@ -95,7 +108,7 @@
                     return response.text();
                 })
                 .then(data => {
-                    console.log("NDVI API Response:", data);
+                    console.log("API Response:", data);
                     
                     if (data.includes('error')) {
                         throw new Error(data);
@@ -103,115 +116,131 @@
 
                     const lines = data.trim().split('\n');
                     if (lines.length < 2) {
-                        throw new Error('No data found in the NDVI response');
+                        throw new Error('No data found in the response');
                     }
 
                     const headers = lines[0].split(',');
                     const dateIndex = headers.indexOf('date');
                     const ndviIndex = headers.indexOf('ndvi');
+                    const ndwiIndex = headers.indexOf('ndwi');
                     
-                    if (dateIndex === -1 || ndviIndex === -1) {
+                    if (dateIndex === -1 || ndviIndex === -1 || ndwiIndex === -1) {
                         console.error('Headers:', headers);
-                        throw new Error('Required columns (date or ndvi) not found in the data');
+                        throw new Error('Required columns (date, ndvi, or ndwi) not found in the data');
                     }
 
-                    const ndviData = lines.slice(1)
+                    const processedData = lines.slice(1)
                         .map(line => {
                             const fields = line.split(',');
                             return {
                                 date: fields[dateIndex],
-                                ndvi: parseFloat(fields[ndviIndex])
+                                ndvi: parseFloat(fields[ndviIndex]),
+                                ndwi: parseFloat(fields[ndwiIndex])
                             };
                         })
-                        .filter(item => !isNaN(item.ndvi))
+                        .filter(item => !isNaN(item.ndvi) && !isNaN(item.ndwi))
                         .sort((a, b) => new Date(a.date) - new Date(b.date));
 
-                    if (ndviData.length === 0) {
-                        throw new Error('No valid NDVI data found');
+                    if (processedData.length === 0) {
+                        throw new Error('No valid data found');
                     }
 
-                    console.log('Processed NDVI Data:', ndviData);
-                    updateChart(ndviData);
+                    console.log('Processed Data:', processedData);
+                    updateCharts(processedData);
                 })
                 .catch(error => {
-                    console.error('Error fetching NDVI:', error);
-                    document.getElementById('error-message').textContent = `Error fetching NDVI: ${error.message}`;
+                    console.error('Error fetching data:', error);
+                    document.getElementById('error-message').textContent = `Error fetching data: ${error.message}`;
                 })
                 .finally(() => {
                     hideLoader();
                 });
         }
-        function processNDVIData(data) {
-    const processedData = {};
-    data.forEach(item => {
-        const date = new Date(item.date);
-        const year = date.getFullYear();
-        const month = date.getMonth();
-        
-        if (!processedData[year]) {
-            processedData[year] = Array(12).fill(null);
+
+        function processData(data, indexType) {
+            const processedData = {};
+            data.forEach(item => {
+                const date = new Date(item.date);
+                const year = date.getFullYear();
+                const month = date.getMonth();
+                
+                if (!processedData[year]) {
+                    processedData[year] = Array(12).fill(null);
+                }
+                
+                if (processedData[year][month] === null || item[indexType] > processedData[year][month]) {
+                    processedData[year][month] = item[indexType];
+                }
+            });
+            return processedData;
         }
-        
-        if (processedData[year][month] === null || item.ndvi > processedData[year][month]) {
-            processedData[year][month] = item.ndvi;
+
+        function updateCharts(data) {
+            updateChart(data, 'ndvi', 'ndviChart', 'NDVI Values by Month and Year');
+            updateChart(data, 'ndwi', 'ndwiChart', 'NDWI Values by Month and Year');
         }
-    });
-    return processedData;
-}
 
-function updateChart(data) {
-    const ctx = document.getElementById('ndviChart').getContext('2d');
-    const processedData = processNDVIData(data);
-    
-    const datasets = Object.entries(processedData).map(([year, values]) => ({
-        label: year,
-        data: values,
-        borderColor: `hsl(${Math.random() * 360}, 70%, 50%)`,
-        fill: false,
-        tension: 0.1
-    }));
+        function updateChart(data, indexType, chartId, title) {
+            const ctx = document.getElementById(chartId).getContext('2d');
+            const processedData = processData(data, indexType);
+            
+            const datasets = Object.entries(processedData).map(([year, values]) => ({
+                label: year,
+                data: values,
+                borderColor: `hsl(${Math.random() * 360}, 70%, 50%)`,
+                fill: false,
+                tension: 0.1
+            }));
 
-    if (chart) {
-        chart.destroy();
-    }
+            if (chartId === 'ndviChart' && ndviChart) {
+                ndviChart.destroy();
+            } else if (chartId === 'ndwiChart' && ndwiChart) {
+                ndwiChart.destroy();
+            }
 
-    chart = new Chart(ctx, {
-        type: 'line',
-        data: {
-            labels: ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'],
-            datasets: datasets
-        },
-        options: {
-            responsive: true,
-            scales: {
-                y: {
-                    beginAtZero: true,
-                    max: 1,
-                    title: {
-                        display: true,
-                        text: 'NDVI'
-                    }
+            const newChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'],
+                    datasets: datasets
                 },
-                x: {
-                    title: {
-                        display: true,
-                        text: 'Month'
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            max: 1,
+                            title: {
+                                display: true,
+                                text: indexType.toUpperCase()
+                            }
+                        },
+                        x: {
+                            title: {
+                                display: true,
+                                text: 'Month'
+                            }
+                        }
+                    },
+                    plugins: {
+                        title: {
+                            display: true,
+                            text: title
+                        },
+                        legend: {
+                            position: 'right'
+                        }
                     }
                 }
-            },
-            plugins: {
-                title: {
-                    display: true,
-                    text: 'NDVI Values by Month and Year'
-                },
-                legend: {
-                    position: 'right'
-                }
+            });
+
+            if (chartId === 'ndviChart') {
+                ndviChart = newChart;
+            } else if (chartId === 'ndwiChart') {
+                ndwiChart = newChart;
             }
         }
-    });
-}
-
 
         map.on('load', () => {
             map.addSource('fused-vector-source', {
@@ -233,7 +262,7 @@ function updateChart(data) {
                         'case',
                         ['boolean', ['feature-state', 'selected'], false],
                         'yellow',
-                        'rgba(53, 175, 109, 0.8)'  // Darker green color
+                        'rgba(53, 175, 109, 0.8)'
                     ],
                     'fill-outline-color': 'white',
                     'fill-opacity': [
@@ -250,7 +279,6 @@ function updateChart(data) {
                     const clickedFeature = e.features[0];
                     const clickedFeatureId = clickedFeature.id;
 
-                    // If a feature was previously selected, unselect it
                     if (selectedFeatureId !== null) {
                         map.setFeatureState(
                             { source: 'fused-vector-source', sourceLayer: 'udf', id: selectedFeatureId },
@@ -258,7 +286,6 @@ function updateChart(data) {
                         );
                     }
 
-                    // Select the clicked feature
                     selectedFeatureId = clickedFeatureId;
                     map.setFeatureState(
                         { source: 'fused-vector-source', sourceLayer: 'udf', id: selectedFeatureId },
@@ -270,7 +297,7 @@ function updateChart(data) {
                     const lat = e.lngLat.lat;
                     const lon = e.lngLat.lng;
                     
-                    fetchNDVI(lat, lon);
+                    fetchData(lat, lon);
                 }
             });
 
