@@ -184,13 +184,24 @@
             const ctx = document.getElementById(chartId).getContext('2d');
             const processedData = processData(data, indexType);
             
-            const datasets = Object.entries(processedData).map(([year, values]) => ({
+            const years = Object.keys(processedData).sort();
+            const latestYear = years[years.length - 1];
+            
+            const latestYearColor = indexType === 'ndvi' ? 'rgba(0, 128, 0, 0.8)' : 'rgba(0, 0, 255, 0.8)';
+            
+            const datasets = years.map(year => ({
                 label: year,
-                data: values,
-                borderColor: `hsl(${Math.random() * 360}, 70%, 50%)`,
+                data: processedData[year],
+                borderColor: year === latestYear ? latestYearColor : 'rgba(169, 169, 169, 0.8)',
+                backgroundColor: year === latestYear ? latestYearColor : 'rgba(169, 169, 169, 0.8)',
                 fill: false,
-                tension: 0.1
+                tension: 0.1,
+                borderWidth: year === latestYear ? 3 : 1,
+                order: year === latestYear ? 1 : 2  // Lower order is drawn on top
             }));
+
+            // Sort datasets to ensure the latest year is last (drawn on top)
+            datasets.sort((a, b) => b.order - a.order);
 
             if (chartId === 'ndviChart' && ndviChart) {
                 ndviChart.destroy();
@@ -209,8 +220,9 @@
                     maintainAspectRatio: false,
                     scales: {
                         y: {
-                            beginAtZero: true,
-                            max: 1,
+                            beginAtZero: indexType === 'ndvi',
+                            min: indexType === 'ndwi' ? -1 : undefined,
+                            max: indexType === 'ndwi' ? 0 : 1,
                             title: {
                                 display: true,
                                 text: indexType.toUpperCase()
@@ -229,7 +241,22 @@
                             text: title
                         },
                         legend: {
-                            position: 'right'
+                            position: 'right',
+                            labels: {
+                                filter: function(legendItem, chartData) {
+                                    // Only show the latest year in the legend
+                                    return legendItem.text === latestYear;
+                                },
+                                generateLabels: function(chart) {
+                                    const labels = Chart.defaults.plugins.legend.labels.generateLabels(chart);
+                                    labels.forEach(label => {
+                                        if (label.text === latestYear) {
+                                            label.text += ' (Latest)';
+                                        }
+                                    });
+                                    return labels;
+                                }
+                            }
                         }
                     }
                 }
@@ -241,7 +268,6 @@
                 ndwiChart = newChart;
             }
         }
-
         map.on('load', () => {
             map.addSource('fused-vector-source', {
                 'type': 'vector',
