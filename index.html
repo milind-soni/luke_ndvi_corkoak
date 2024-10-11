@@ -78,8 +78,8 @@
         }
 
         function fetchNDVI(lat, lon) {
-            const start_date = '2023-01-01';
-            const end_date = '2023-12-31';
+            const start_date = '2017-01-01';
+            const end_date = '2024-12-31';
             const buffer_km = 1;
 
             const url = `https://www.fused.io/server/v1/realtime-shared/fsh_7mlqdkhG8Lf6dxJaRekHUc/run/file?dtype_out_raster=tiff&dtype_out_vector=csv&search_lat=${lat}&search_lon=${lon}&start_date=${start_date}&end_date=${end_date}&buffer_km=${buffer_km}`;
@@ -141,36 +141,77 @@
                     hideLoader();
                 });
         }
+        function processNDVIData(data) {
+    const processedData = {};
+    data.forEach(item => {
+        const date = new Date(item.date);
+        const year = date.getFullYear();
+        const month = date.getMonth();
+        
+        if (!processedData[year]) {
+            processedData[year] = Array(12).fill(null);
+        }
+        
+        if (processedData[year][month] === null || item.ndvi > processedData[year][month]) {
+            processedData[year][month] = item.ndvi;
+        }
+    });
+    return processedData;
+}
 
-        function updateChart(data) {
-            const ctx = document.getElementById('ndviChart').getContext('2d');
-            
-            if (chart) {
-                chart.destroy();
-            }
+function updateChart(data) {
+    const ctx = document.getElementById('ndviChart').getContext('2d');
+    const processedData = processNDVIData(data);
+    
+    const datasets = Object.entries(processedData).map(([year, values]) => ({
+        label: year,
+        data: values,
+        borderColor: `hsl(${Math.random() * 360}, 70%, 50%)`,
+        fill: false,
+        tension: 0.1
+    }));
 
-            chart = new Chart(ctx, {
-                type: 'line',
-                data: {
-                    labels: data.map(item => item.date),
-                    datasets: [{
-                        label: 'NDVI',
-                        data: data.map(item => item.ndvi),
-                        borderColor: 'rgb(75, 192, 192)',
-                        tension: 0.1
-                    }]
+    if (chart) {
+        chart.destroy();
+    }
+
+    chart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'],
+            datasets: datasets
+        },
+        options: {
+            responsive: true,
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    max: 1,
+                    title: {
+                        display: true,
+                        text: 'NDVI'
+                    }
                 },
-                options: {
-                    responsive: true,
-                    scales: {
-                        y: {
-                            beginAtZero: true,
-                            max: 1
-                        }
+                x: {
+                    title: {
+                        display: true,
+                        text: 'Month'
                     }
                 }
-            });
+            },
+            plugins: {
+                title: {
+                    display: true,
+                    text: 'NDVI Values by Month and Year'
+                },
+                legend: {
+                    position: 'right'
+                }
+            }
         }
+    });
+}
+
 
         map.on('load', () => {
             map.addSource('fused-vector-source', {
